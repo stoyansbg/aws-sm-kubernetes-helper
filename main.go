@@ -6,7 +6,6 @@
 		AWS_REGION
 		AWS_ACCESS_KEY_ID
 		AWS_SECRET_ACCESS_KEY
-		CHECK_INTERVAL			- how often we check for secret updates, default is 5m
 */
 
 package main
@@ -15,7 +14,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -26,11 +24,7 @@ var (
 	secretName string
 	region     string
 
-	secret    string
-	newSecret string
-
-	checkInterval       time.Duration
-	checkIntervalString = "5m"
+	secret string
 
 	secretDestPath string
 
@@ -88,27 +82,9 @@ func main() {
 		secretDestPath = "/var/run/secrets/aws-sm/.secret"
 	}
 
-	if os.Getenv("CHECK_INTERVAL") != "" {
-		checkIntervalString = os.Getenv("CHECK_INTERVAL")
-	}
+	secret = getSecret()
+	log.Println("pulled secret from AWS Secret manager")
+	saveSecret(secret, secretDestPath)
+	log.Printf("saved secret to %s", secretDestPath)
 
-	checkInterval, err = time.ParseDuration(checkIntervalString)
-	if err != nil {
-		log.Fatalf("failed to parse %q: %s", checkIntervalString, err)
-	}
-
-	for true {
-		newSecret = getSecret()
-		log.Println("pulled secret from AWS Secret manager")
-		log.Println(newSecret)
-
-		// check if secret changed/rotated
-		if secret != newSecret {
-			log.Println("the secret has changed; storing new secret")
-			secret = newSecret
-			saveSecret(secret, secretDestPath)
-			// TODO: bounce the app
-		}
-		time.Sleep(checkInterval)
-	}
 }
