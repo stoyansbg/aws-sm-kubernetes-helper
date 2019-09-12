@@ -1,11 +1,23 @@
+/*
+	Input comes from environment variables:
+
+		SECRET_NAME
+		SECRET_DEST_PATH		- optional, default is /var/run/secrets/aws-sm/.secret
+		AWS_REGION
+		AWS_ACCESS_KEY_ID
+		AWS_SECRET_ACCESS_KEY
+		CHECK_INTERVAL			- how often we check for secret updates, default is 5m
+*/
+
 package main
 
 import (
-	"encoding/base64"
-	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
 )
@@ -13,11 +25,19 @@ import (
 var (
 	secretName string
 	region     string
+
+	secret    string
+	newSecret string
+
+	checkInterval       time.Duration
+	checkIntervalString = "5m"
+
+	secretDestPath string
+
+	err error
 )
 
 func getSecret() string {
-	secretName := "sttest" // *** pull this from ENV ***
-	region := "us-west-2"  // *** pull this from ENV ***
 
 	//Create a Secrets Manager client
 	svc := secretsmanager.New(session.New(&aws.Config{Region: aws.String(region)}))
@@ -26,58 +46,69 @@ func getSecret() string {
 		VersionStage: aws.String("AWSCURRENT"), // VersionStage defaults to AWSCURRENT if unspecified
 	}
 
-	// In this sample we only handle the specific exceptions for the 'GetSecretValue' API.
+	// Simplified error checking. Check sample code from AWS if you run into issues.
 	// See https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
 
 	result, err := svc.GetSecretValue(input)
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case secretsmanager.ErrCodeDecryptionFailure:
-				// Secrets Manager can't decrypt the protected secret text using the provided KMS key.
-				fmt.Println(secretsmanager.ErrCodeDecryptionFailure, aerr.Error())
-
-			case secretsmanager.ErrCodeInternalServiceError:
-				// An error occurred on the server side.
-				fmt.Println(secretsmanager.ErrCodeInternalServiceError, aerr.Error())
-
-			case secretsmanager.ErrCodeInvalidParameterException:
-				// You provided an invalid value for a parameter.
-				fmt.Println(secretsmanager.ErrCodeInvalidParameterException, aerr.Error())
-
-			case secretsmanager.ErrCodeInvalidRequestException:
-				// You provided a parameter value that is not valid for the current state of the resource.
-				fmt.Println(secretsmanager.ErrCodeInvalidRequestException, aerr.Error())
-
-			case secretsmanager.ErrCodeResourceNotFoundException:
-				// We can't find the resource that you asked for.
-				fmt.Println(secretsmanager.ErrCodeResourceNotFoundException, aerr.Error())
-			}
-		} else {
-			// Print the error, cast err to awserr.Error to get the Code and
-			// Message from an error.
-			fmt.Println(err.Error())
-		}
-		return err.Error()
+		log.Fatal(err.Error())
 	}
 
-	var secretString, decodedBinarySecret string
-	if result.SecretString != nil {
-		secretString = *result.SecretString
-		return secretString
-	} else {
-		decodedBinarySecretBytes := make([]byte, base64.StdEncoding.DecodedLen(len(result.SecretBinary)))
-		len, err := base64.StdEncoding.Decode(decodedBinarySecretBytes, result.SecretBinary)
-		if err != nil {
-			fmt.Println("Base64 Decode Error:", err)
-			return "error 2"
-		}
-		decodedBinarySecret = string(decodedBinarySecretBytes[:len])
-		return decodedBinarySecret
+	if result.SecretString == nil {
+		log.Fatal("the secret is empty")
 	}
+
+	return *result.SecretString
 
 }
 
+func saveSecret(secret string, dest string) {
+	if err := ioutil.WriteFile(dest, []byte(secret), 0600); err != nil {
+		log.Fatalf("failed to save secret to %s: %s", dest, err)
+	}
+	return
+}
+
 func main() {
-	fmt.Println(getSecret())
+
+	log.Println("Starting the AWS Secrets Manager Kubernetes Helper...")
+
+	secretName = os.Getenv("SECRET_NAME")
+	if secretName == "" {
+		log.Fatal("SECRET_NAME must be set and not empty")
+	}
+
+	region = os.Getenv("AWS_REGION")
+	if region == "" {
+		log.Fatal("AWS_REGION must be set and not empty")
+	}
+
+	secretDestPath = os.Getenv("SECRET_DEST_PATH")
+	if secretDestPath == "" {
+		secretDestPath = "/var/run/secrets/aws-sm/.secret"
+	}
+
+	if os.Getenv("CHECK_INTERVAL") != "" {
+		checkIntervalString = os.Getenv("CHECK_INTERVAL")
+	}
+
+	checkInterval, err = time.ParseDuration(checkIntervalString)
+	if err != nil {
+		log.Fatalf("failed to parse %q: %s", checkIntervalString, err)
+	}
+
+	for true {
+		newSecret = getSecret()
+		log.Println("pulled secret from AWS Secret manager")
+		log.Println(newSecret)
+
+		// check if secret changed/rotated
+		if secret != newSecret {
+			log.Println("the secret has changed; storing new secret")
+			secret = newSecret
+			saveSecret(secret, secretDestPath)
+			// TODO: bounce the app
+		}
+		time.Sleep(checkInterval)
+	}
 }
