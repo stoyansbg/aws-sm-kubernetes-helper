@@ -76,3 +76,9 @@ spec:
 
   # ...
 ```
+
+## References
+
+https://github.com/sethvargo/vault-kubernetes-authenticator
+https://github.com/sethvargo/vault-init
+AWS Secrets Manager sample code
