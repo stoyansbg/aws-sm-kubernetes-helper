@@ -3,6 +3,6 @@ module github.com/stoyansbg/aws-sm-kubernetes-helper
 go 1.12
 
 require (
-	github.com/aws/aws-sdk-go v1.23.21
-	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2 // indirect
+	github.com/aws/aws-sdk-go v1.34.0
+	golang.org/x/net v0.7.0 // indirect
 )
